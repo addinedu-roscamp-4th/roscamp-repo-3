@@ -176,5 +176,5 @@ cython_debug/
 # 가상환경 
 /langchain_venv
 
-SerboWay_GUI/LLM/*
+
 
