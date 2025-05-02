@@ -176,5 +176,10 @@ cython_debug/
 # 가상환경 
 /langchain_venv
 
+/test_venv
 
 
+# jj 추가
+checkerboards/
+
+requirements.txt
