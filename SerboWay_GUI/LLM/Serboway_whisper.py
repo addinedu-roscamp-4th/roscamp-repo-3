@@ -10,172 +10,200 @@ import whisper
 import sounddevice as sd
 import soundfile as sf
 
-# ===== 상태 관리를 위한 클래스 정의 =====
-class OrderState(TypedDict):
-    messages: Annotated[List[Union[AIMessage, HumanMessage]], add_messages]  # 메시지 리스트 관리
-    order: dict  # 주문 정보 저장
+# --- 가격 테이블 ---
+MENU_PRICES = {
+    "불고기 샌드위치": 6500,
+    "새우 샌드위치": 6200,
+    "베이컨 샌드위치": 6000
+}
+SAUCE_LIST = ["이탈리안", "칠리"]
+VEGETABLE_PRICES = {"양상추": 0, "로메인": 700, "바질": 800}
+CHEESE_PRICES = {"슬라이스 치즈": 0, "슈레드 치즈": 1000, "모짜렐라 치즈": 1300}
 
-# ===== Whisper 모델을 이용한 음성 인식 함수 =====
+# --- 상태 관리 타입 ---
+class OrderState(TypedDict):
+    messages: Annotated[List[Union[AIMessage, HumanMessage]], add_messages]
+    order: dict
+
+# --- 음성 인식 함수 ---
 def speech_to_text():
     st.info("말씀해주세요...", icon="🎤")
     sd.default.samplerate = 16000
     sd.default.channels = 1
-    recording = sd.rec(int(5 * 16000))  # 5초 동안 음성 녹음
+    recording = sd.rec(int(5 * 16000))
     sd.wait()
     wav_path = "temp_whisper.wav"
     sf.write(wav_path, recording, 16000)
     model = whisper.load_model("base")
-    result = model.transcribe(wav_path, language="ko")  # 음성을 한국어 텍스트로 변환
+    result = model.transcribe(wav_path, language="ko")
     return result["text"]
 
-# ===== 주문 텍스트를 파싱하여 주문 정보를 추출하는 함수 =====
-def parse_order(text: str) -> dict:
-    menu_match = re.search(r"(햄|불고기|새우)", text)
-    menu_map = {
-        "햄": "햄 샌드위치",
-        "불고기": "불고기 샌드위치",
-        "새우": "새우 샌드위치"
-    }
-    menu = menu_map[menu_match.group(0)] if menu_match else None
-
-    sauces = re.findall(r"(이탈리안|칠리)", text)
-    cheeses = re.findall(r"(슈레드 치즈|모짜렐라 치즈|슬라이스 치즈)", text)
-    vegetables = re.findall(r"(로메인|바질|양상추)", text)
-    etc = re.findall(r"(베이컨)", text)
-    done = bool(re.search(r"(완료|그만|끝|주문\s*완료)", text))
-
+# --- 주문 상태 초기화 ---
+def get_initial_order():
     return {
-        "menu": menu,
-        "sauce": list(set(sauces)),
-        "cheese": list(set(cheeses)),
-        "vegetable": list(set(vegetables)),
-        "etc": list(set(etc)),
-        "done": done,
+        "menu": None,
+        "sauce": None,
+        "vegetable": "양상추",
+        "cheese": "슬라이스 치즈",
+        "step": "menu",
+        "done": False,
         "confirmed": False,
     }
 
-# ===== 주문 내용을 보기 좋게 포맷하는 함수 =====
-def format_order_summary(order: dict) -> str:
-    parts = [f"메뉴: {order['menu']}"] if order.get("menu") else []
-    if order["sauce"]:
-        parts.append(f"소스: {', '.join(order['sauce'])}")
-    if order["cheese"]:
-        parts.append(f"치즈: {', '.join(order['cheese'])}")
-    if order["vegetable"]:
-        parts.append(f"야채: {', '.join(order['vegetable'])}")
-    if order["etc"]:
-        parts.append(f"추가: {', '.join(order['etc'])}")
-    return "\n".join(parts)
+# --- 단계별 입력 파싱 ---
+def parse_menu(text):
+    for k in MENU_PRICES:
+        if k[:2] in text:
+            return k
+    return None
 
-# ===== 주문을 처리하는 노드 =====
+def parse_sauce(text):
+    for s in SAUCE_LIST:
+        if s in text:
+            return s
+    return None
+
+def parse_vegetable(text):
+    for v in VEGETABLE_PRICES:
+        if v in text:
+            return v
+    return None
+
+def parse_cheese(text):
+    for c in CHEESE_PRICES:
+        if c in text:
+            return c
+    return None
+
+# --- 주문 요약 및 가격 계산 ---
+def format_order_summary(order):
+    base_price = MENU_PRICES[order["menu"]] if order["menu"] else 0
+    veg_price = VEGETABLE_PRICES[order["vegetable"]]
+    cheese_price = CHEESE_PRICES[order["cheese"]]
+    total = base_price + veg_price + cheese_price
+    summary = (
+        f"메뉴: {order['menu']} ({base_price}원)\n"
+        f"소스: {order['sauce']}\n"
+        f"야채: {order['vegetable']} (+{veg_price}원)\n"
+        f"치즈: {order['cheese']} (+{cheese_price}원)\n"
+        f"총 결제 금액: {total}원"
+    )
+    return summary
+
+# --- 주문 처리 노드 ---
 def process_order_node(state: OrderState):
-    last_msg = state["messages"][-1].content
-    order = parse_order(last_msg)
+    order = state["order"]
+    last_msg = state["messages"][-1].content.strip()
 
-    # 메뉴가 선택되지 않은 경우
-    if not order["menu"]:
-        return {
-            "messages": [AIMessage("메뉴를 선택해주세요. (햄 샌드위치 / 불고기 샌드위치 / 새우 샌드위치)")],
-            "order": order
-        }
+    if order["step"] == "menu":
+        menu = parse_menu(last_msg)
+        if not menu:
+            return {"messages": [AIMessage("메뉴를 선택해주세요. (불고기/새우/베이컨 샌드위치)")], "order": order}
+        order["menu"] = menu
+        order["step"] = "sauce"
+        return {"messages": [AIMessage(f"{menu}를 선택하셨습니다.\n소스를 선택해주세요. (이탈리안/칠리)")], "order": order}
 
-    # 부가 재료가 없는 경우
-    if not any([order["sauce"], order["cheese"], order["vegetable"], order["etc"]]):
-        return {
-            "messages": [AIMessage(f"{order['menu']}를 선택하셨습니다. 추가할 소스, 치즈, 야채 또는 베이컨이 있으신가요?")],
-            "order": order
-        }
+    if order["step"] == "sauce":
+        sauce = parse_sauce(last_msg)
+        if not sauce:
+            return {"messages": [AIMessage("소스를 선택해주세요. (이탈리안/칠리)")], "order": order}
+        order["sauce"] = sauce
+        order["step"] = "vegetable"
+        return {"messages": [AIMessage("야채를 선택해주세요. (양상추/로메인/바질)\n기본은 양상추. 변경 시 추가금이 있습니다.")], "order": order}
 
-    # 주문 완료 신호가 없는 경우
-    if not order["done"]:
+    if order["step"] == "vegetable":
+        veg = parse_vegetable(last_msg)
+        if not veg:
+            veg = "양상추"
+        order["vegetable"] = veg
+        order["step"] = "cheese"
+        return {"messages": [AIMessage("치즈를 선택해주세요. (슬라이스 치즈/슈레드 치즈/모짜렐라 치즈)\n기본은 슬라이스 치즈입니다. 변경 시 추가금이 있습니다.")], "order": order}
+
+    if order["step"] == "cheese":
+        cheese = parse_cheese(last_msg)
+        if not cheese:
+            cheese = "슬라이스 치즈"
+        order["cheese"] = cheese
+        order["step"] = "confirm"
         summary = format_order_summary(order)
-        return {
-            "messages": [AIMessage(f"현재까지의 주문 내역입니다:\n{summary}\n주문을 완료하시려면 '완료'라고 말씀해주세요.")],
-            "order": order
-        }
+        return {"messages": [AIMessage(f"주문 내역입니다:\n{summary}\n주문을 완료하시려면 '네'라고 입력해주세요. 취소는 '아니오'")], "order": order}
 
-    # 주문 완료 확인 메시지
-    summary = format_order_summary(order)
-    return {
-        "messages": [AIMessage(f"{summary}\n로 주문하시겠습니까? (네/아니오)")],
-        "order": order
-    }
+    if order["step"] == "confirm":
+        if "네" in last_msg:
+            order["confirmed"] = True
+            summary = format_order_summary(order)
+            return {"messages": [AIMessage(f"✅ 주문이 완료되었습니다!\n{summary}")], "order": order}
+        elif "아니오" in last_msg:
+            return {"messages": [AIMessage("🔄 주문을 처음부터 다시 시작합니다.")], "order": get_initial_order()}
+        else:
+            return {"messages": [AIMessage("주문을 완료하시려면 '네' 또는 '아니오'로 답해주세요.")], "order": order}
 
-# ===== 주문 확인 처리 노드 =====
-def confirm_order_node(state: OrderState):
-    last_msg = state["messages"][-1].content.lower()
-    if "네" in last_msg:
-        state["order"]["confirmed"] = True
-        summary = format_order_summary(state["order"])
-        return {
-            "messages": [AIMessage(f"✅ 주문 완료! 다음과 같이 준비하겠습니다:\n{summary}")],
-            "order": state["order"]
-        }
-    # 주문을 다시 시작 요청
-    return {
-        "messages": [AIMessage("🔄 주문을 다시 시작해주세요.")],
-        "order": {}
-    }
+    return {"messages": [AIMessage("오류가 발생했습니다. 처음부터 다시 시도해주세요.")], "order": get_initial_order()}
 
-# ===== 메시지를 분석하여 다음 노드를 결정하는 라우팅 함수 =====
+# --- 라우팅 함수 ---
 def route_message(state: OrderState):
-    last_msg = state["messages"][-1].content.lower()
     if state["order"].get("confirmed"):
         return END
-    if any(kw in last_msg for kw in ["네", "아니오"]):
-        return "confirm"
     return "process"
 
-# ===== Streamlit을 이용한 웹 인터페이스 구성 =====
+# --- Streamlit UI ---
 st.set_page_config(page_title="서보웨이 AI 주문", page_icon="🥪")
 st.title("🥪 서보웨이 AI 주문 시스템")
+st.image("Menu.png")
 
-# image 경로
-image_url="Menu.png"
+if "messages" not in st.session_state or "order" not in st.session_state:
+    st.session_state.messages = [AIMessage("어서오세요! 주문하실 샌드위치를 선택해주세요. (불고기/새우/베이컨 샌드위치)")]
+    st.session_state.order = get_initial_order()
 
-# 웹상의 이미지 표시
-st.image(image_url)
-
-# 초기 메시지 설정
-if "messages" not in st.session_state:
-    st.session_state.messages = [AIMessage("어서오세요! 주문하실 샌드위치를 선택해주세요. (햄/불고기/새우)")]
-
-# 메시지 채팅 창에 출력
+# 채팅 메시지 출력
 for msg in st.session_state.messages:
     role = "user" if isinstance(msg, HumanMessage) else "assistant"
-    st.chat_message(role).write(msg.content)
+    with st.chat_message(role):
+        st.markdown(msg.content)
 
-# 텍스트 및 음성 입력
-input_col, voice_col = st.columns([5, 1])
-with input_col:
-    text_input = st.chat_input("주문을 입력하세요...")
-with voice_col:
+# 입력창 및 음성 버튼
+col1, col2 = st.columns([8, 1])
+with col1:
+    user_input = st.chat_input("주문을 입력하세요...")
+with col2:
     if st.button("🎤", use_container_width=True):
-        text_input = speech_to_text()
+        user_input = speech_to_text()
+        if user_input:
+            st.session_state.messages.append(HumanMessage(user_input))
+            st.rerun()
 
-# 워크플로우 처리 및 결과 출력
-if text_input:
-    st.session_state.messages.append(HumanMessage(text_input))
+# 입력이 있으면 처리
+if user_input:
+    st.session_state.messages.append(HumanMessage(user_input))
+
     workflow = StateGraph(OrderState)
     workflow.add_node("process", process_order_node)
-    workflow.add_node("confirm", confirm_order_node)
-    workflow.add_conditional_edges("process", route_message, {"confirm": "confirm", "process": END})
-    workflow.add_edge("confirm", END)
+    workflow.add_conditional_edges(
+    "process",
+    route_message,
+    {
+        "confirm": "confirm", 
+        "process": "process",  # process 노드로 재귀
+        END: END  # END 키 명시적 추가
+    }
+)
+
     workflow.set_entry_point("process")
     compiled_workflow = workflow.compile()
 
-    result = compiled_workflow.invoke({"messages": st.session_state.messages, "order": {}})
+    result = compiled_workflow.invoke({"messages": st.session_state.messages, "order": st.session_state.order})
     ai_response = result["messages"][-1]
     st.session_state.messages.append(ai_response)
-    st.chat_message("assistant").write(ai_response.content)
+    st.session_state.order = result["order"]
 
-    # 추가된 조건: 빈 응답 체크
-    if ai_response.content.strip():
-        tts = gTTS(ai_response.content, lang="ko")
+    st.rerun()  # 응답 후 즉시 rerun하여 대화가 바로 갱신
+
+# 마지막 메시지(assistant)가 있으면 음성 출력
+if st.session_state.messages:
+    last_msg = st.session_state.messages[-1]
+    if isinstance(last_msg, AIMessage) and last_msg.content.strip():
+        tts = gTTS(last_msg.content, lang="ko")
         buf = io.BytesIO()
         tts.write_to_fp(buf)
         buf.seek(0)
         st.audio(buf.read(), format="audio/mp3")
-    else:
-        st.warning("응답 텍스트가 비어 있어 음성 출력을 건너뜁니다.")
-
