@@ -117,11 +117,15 @@ def live_video_correction(calibration_data):
         x, y, w, h = roi
         if all(v > 0 for v in [x, y, w, h]):
             dst = dst[y:y+h, x:x+w]
-        original = cv2.resize(frame, (640, 480))
+            
+        #original = cv2.resize(frame, (640, 480))
+        
         corrected = cv2.resize(dst, (640, 480))
         
-        combined = np.hstack((original, corrected))
-        cv2.imshow('Original | Corrected', combined)
+        #combined = np.hstack((original, corrected))
+        
+        # cv2.imshow('Original | Corrected', combined)
+        cv2.imshow('Corrected', corrected)
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
@@ -129,7 +133,7 @@ def live_video_correction(calibration_data):
     cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-    pkl_path = r'roscamp-repo-3/SerboWay_AI_Server/Vision/calibration/camera_calibration.pkl'
+    pkl_path = r'/home/addinedu/roscamp-repo-3/SerboWay_AI_Server/Vision/calibration/camera_calibration.pkl'
     if os.path.exists(pkl_path):
         print("Loading existing calibration data...")
         with open(pkl_path, 'rb') as f:
