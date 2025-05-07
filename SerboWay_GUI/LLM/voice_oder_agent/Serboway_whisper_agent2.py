@@ -1,6 +1,8 @@
 import re
 import streamlit as st
 from typing import Dict, List, Optional, Any
+import openai
+import os
 
 # LangChain 관련 임포트
 from langchain_openai import ChatOpenAI
@@ -15,6 +17,15 @@ import sounddevice as sd
 import soundfile as sf
 from gtts import gTTS
 import io
+
+import os
+from dotenv import load_dotenv
+import torch
+
+load_dotenv()
+# print(os.getenv("OPENAI_API_KEY"))  # 값이 출력되는지 확인
+
+
 
 # --- 데이터 구조 정의 ---
 MENU_DATA = {
@@ -148,7 +159,7 @@ def update_order(
             "confirm" if order_state.step == "cheese" else order_state.step
         )
 
-    return get_order_summary()
+    return get_order_summary("")
 
 
 @tool
@@ -179,31 +190,53 @@ def get_order_summary(tool_input: str = "") -> str:
 def confirm_order(confirm: bool) -> str:
     """주문을 확정하거나 취소합니다."""
     order_state = st.session_state.order_state
-
     if confirm:
         order_state.confirmed = True
-        return f"✅ 주문이 완료되었습니다!\n{get_order_summary()}"
+        return f"✅ 주문이 완료되었습니다!\n{get_order_summary('')}"  # 빈 문자열 전달
     else:
         order_state.reset()
         return "🔄 주문을 처음부터 다시 시작합니다."
 
 
+if "whisper_model" not in st.session_state:
+    st.session_state.whisper_model = whisper.load_model("base")
+
 @tool
 def speech_to_text(tool_input: str = "") -> str:
     """음성을 텍스트로 변환합니다."""
-    st.info("말씀해주세요...", icon="🎤")
-    sd.default.samplerate = 16000
-    sd.default.channels = 1
-    recording = sd.rec(int(5 * 16000))
-    sd.wait()
+    try:
+        st.info("말씀해주세요", icon="🎤")
+        sd.default.samplerate = 16000
+        sd.default.channels = 1
+        
+        # 타임아웃 추가
+        recording = sd.rec(int(3 * 16000))
+        sd.wait(timeout=5)  # 5초 타임아웃 추가
+        
+        wav_path = "temp_whisper.wav"
+        sf.write(wav_path, recording, 16000)
+        
+        # GPU 설정
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        
+        # 모델을 세션 상태에서 가져옴
+        model = st.session_state.whisper_model
+        
+        # 인식 타임아웃 및 안전 파라미터 설정
+        result = model.transcribe(
+            wav_path,
+            language="ko",
+            fp16=True if device == "cuda" else False,
+            temperature=0.0,
+            best_of=1,
+            beam_size=1
+        )
+        
+        return result["text"]
+    except Exception as e:
+        return f"음성 인식 중 오류 발생: {str(e)}"
 
-    wav_path = "temp_whisper.wav"
-    sf.write(wav_path, recording, 16000)
 
-    model = whisper.load_model("base")
-    result = model.transcribe(wav_path, language="ko")
-
-    return result["text"]
 
 
 # ====== Agent 초기화 ======
@@ -232,6 +265,8 @@ def initialize_agent():
     
     각 단계에서 사용자 입력을 분석해 update_order로 상태 업데이트
     주문 완료 시 confirm_order(True) 호출
+
+    - 사용자가 "주문 내역", "가격", "요약", 등과 관련된 질문을 하면 반드시 get_order_summary 도구를 호출해 그 결과를 답변에 포함할 것
     """
 
     prompt = ChatPromptTemplate.from_messages(
@@ -252,6 +287,8 @@ def initialize_agent():
 
 
 # ====== Streamlit UI ======
+torch.classes.__path__ = []
+
 def main():
     st.set_page_config(page_title="서보웨이 AI 주문", page_icon="🥪")
     st.title("🥪 서보웨이 AI 주문 시스템")
@@ -261,7 +298,7 @@ def main():
     if "messages" not in st.session_state:
         st.session_state.messages = [
             AIMessage(
-                content="어서오세요! 서보웨이에 오신 것을 환영합니다. 무엇을 도와드릴까요?"
+                content="어서오세요! 서보웨이에 오신 것을 환영합니다. 주문 하시겠습니까?"
             )
         ]
 
@@ -284,7 +321,7 @@ def main():
     with col2:
         if st.button("🎤", use_container_width=True):
             with st.spinner("음성 인식 중..."):
-                user_input = speech_to_text("")  # tool_input 필수
+                user_input = speech_to_text.invoke("")  # tool_input 필수
 
     if user_input:
         st.session_state.messages.append(HumanMessage(content=user_input))
