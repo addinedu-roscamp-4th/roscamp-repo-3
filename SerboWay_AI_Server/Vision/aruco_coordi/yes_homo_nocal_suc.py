@@ -2,18 +2,11 @@ import cv2
 import cv2.aruco as aruco
 import numpy as np
 
-# # —— 1) 카메라 보정값 (예시) ——
-camera_matrix = np.array([[1000, 0,   640],
-                          [0,    1000, 360],
-                          [0,    0,     1]], dtype=np.float32)
-
-dist_coeffs = np.zeros((5,1))
-
 # —— 2) 월드 좌표계에서 “꼭짓점” 마커 ID 별 실제 좌표 (단위: cm 등) ——
 marker_world = {
     0: (  0,   0),   # 왼쪽 아래
     1: (200,   0),   # 오른쪽 아래
-    4: (200, 100),   # 오른쪽 위
+    2: (200, 100),   # 오른쪽 위
     3: (  0, 100),   # 왼쪽 위
 }
 
@@ -84,7 +77,9 @@ def main():
                 cv2.circle(frame, (int(px),int(py)), 5, (0,255,0), -1)
                 cv2.putText(frame, f"ID:{mid}", (int(px)-20,int(py)-10),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6,(255,0,0),2)
-                cv2.putText(frame, f"({wx:.1f},{wy:.1f})", (int(px)-30,int(py)+20),
+                # cv2.putText(frame, f"({wx:.1f},{wy:.1f})", (int(px)-30,int(py)+20),
+                #             cv2.FONT_HERSHEY_SIMPLEX, 0.6,(0,255,255),2)
+                cv2.putText(frame, f"({int(round(wx))},{int(round(wy))})", (int(px)-30,int(py)+20),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6,(0,255,255),2)
                 # # 5번 마커에 대해서만 월드 좌표 출력
                 # if mid == 5:

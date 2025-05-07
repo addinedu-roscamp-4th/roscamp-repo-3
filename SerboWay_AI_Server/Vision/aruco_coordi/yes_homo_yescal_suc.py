@@ -13,9 +13,9 @@ dist_coeffs = np.array([[-0.0995602, -0.0231152, -0.00138235, 0.00050955, 0.0100
 
 # ===== 기준 마커 월드 좌표 (단위: cm) =====
 marker_world = {
-    0: (0, 0),
+    0: (0, 0,),
     1: (200, 0),
-    4: (200, 100),
+    2: (200, 100),
     3: (0, 100),
 }
 
@@ -95,6 +95,7 @@ def main(calibration_data):
                 cv2.circle(corrected, (int(px), int(py)), 5, (0, 255, 0), -1)
                 cv2.putText(corrected, f"ID:{mid}", (int(px) - 20, int(py) - 10),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+                # r
                 # cv2.putText(corrected, f"({wx:.1f},{wy:.1f})", (int(px) - 30, int(py) + 20),
                 #             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
                 cv2.putText(corrected, f"({int(round(wx))},{int(round(wy))})", (int(px) - 30, int(py) + 20),
@@ -103,7 +104,8 @@ def main(calibration_data):
             cv2.putText(corrected, "No H matrix (need markers 0,1,3,4)", (30, 50),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
-        aruco.drawDetectedMarkers(corrected, corners, ids)
+        # aruco.drawDetectedMarkers(corrected, corners, ids)
+        aruco.drawDetectedMarkers(corrected, corners)
         cv2.imshow("win", corrected)
         if cv2.waitKey(33) & 0xFF == ord('q'):
             break
