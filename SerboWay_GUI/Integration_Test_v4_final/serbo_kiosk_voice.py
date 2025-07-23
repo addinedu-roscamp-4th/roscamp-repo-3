@@ -32,13 +32,16 @@ from langchain_openai import ChatOpenAI
 from langchain.agents import AgentExecutor, create_tool_calling_agent
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
+from pydantic import BaseModel
+from typing import List
+
 from dotenv import load_dotenv
 
 load_dotenv()
+from langchain_teddynote import logging
 
-
-from pydantic import BaseModel
-from typing import List
+# 프로젝트 이름을 입력합니다.
+logging.langsmith("kiosk_voice")
 
 
 # ===================== 메뉴 데이터 로드 =====================
