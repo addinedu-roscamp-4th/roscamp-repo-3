@@ -188,7 +188,7 @@ checkerboards/
 
 requirements.txt
 
-# json file 
+# 
 Serboway_GUI/통합_테스트/order_data.json
 
 SerboWay_GUI/통합_테스트2/menu.py
@@ -200,3 +200,6 @@ SerboWay_GUI/통합_테스트3/UI/
 SerboWay_GUI/통합_테스트3/user_order_list/
 
 serbo_venv/ 
+
+.vscode
+
