@@ -35,13 +35,25 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from pydantic import BaseModel
 from typing import List
 
+# ================== API Load =====================
 from dotenv import load_dotenv
 
 load_dotenv()
+
+
+# Langsmith  연결
 from langchain_teddynote import logging
 
-# 프로젝트 이름을 입력합니다.
 logging.langsmith("kiosk_voice")
+
+
+# =============== memory 설정 =============
+from langgraph.checkpoint.memory import MemorySaver
+
+# from langgraph.checkpoint.memory import MemorySaver
+
+# 메모리 설정
+memory = MemorySaver()
 
 
 # ===================== 메뉴 데이터 로드 =====================
@@ -527,7 +539,7 @@ def main():
         load_whisper_model()
         st.session_state.agent = initialize_agent(tools)
         st.session_state.agent_executor = AgentExecutor(
-            agent=st.session_state.agent, tools=tools, verbose=True
+            agent=st.session_state.agent, tools=tools, verbose=True, checkpointer=memory
         )
         # 세션 상태 및 에이전트 초기화
     if "messages" not in st.session_state:  # ← 들여쓰기 수정 (공백 4개)
