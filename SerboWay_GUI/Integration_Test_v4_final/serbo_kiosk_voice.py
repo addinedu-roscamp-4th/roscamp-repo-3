@@ -316,10 +316,24 @@ def confirm_order(confirm: bool) -> str:
             return "주문할 메뉴가 없습니다. 먼저 메뉴를 선택해주세요."
         order_state.confirmed = True
         send_result = send_order_to_kiosk.invoke("")
-        return f"주문이 완료되었습니다.\n{get_order_summary('')}\n(키오스크 응답: {send_result})"
+        summary = get_order_summary("")
+        # 주문 완료 후 세션 리셋 (OrderState + 대화 기록)
+        _reset_for_next_order()
+        return f"주문이 완료되었습니다.\n{summary}\n(키오스크 응답: {send_result})\n\n새로운 주문을 시작할 수 있습니다."
     else:
         order_state.reset()
         return "🔄 주문을 처음부터 다시 시작합니다."
+
+
+def _reset_for_next_order():
+    """주문 완료 후 다음 주문을 위해 세션을 경량 리셋합니다.
+    Whisper 모델, 에이전트, 메뉴 데이터는 유지하고
+    OrderState와 대화 기록만 초기화합니다."""
+    st.session_state.order_state = OrderState()
+    menu_list = get_menu_list("")
+    initial_message = f"안녕하세요! Serboway입니다.\n\n{menu_list}\n\n어떤 메뉴를 주문하시겠습니까?"
+    st.session_state.messages = [AIMessage(content=initial_message)]
+    st.session_state.last_spoken_idx = -1
 
 
 @tool
