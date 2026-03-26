@@ -2,8 +2,6 @@
 import sys # 시스템 관련 기능(프로그램 종료, 경로 조작 등)
 import os # 운영체제 인터페이스(파일 경로, 환경변수 등)
 import json # JSON 데이터 처리
-import random # 난수 생성(영수증 번호 생성용)
-import string # 문자열 유틸리티(영수증 번호 생성용)
 import subprocess # 외부 프로세스 실행(Streamlit 서버 실행)
 from datetime import datetime # 시간 관련 기능(주문 타임스탬프)
 from typing import Optional, Dict, Any, List # 타입 힌트
@@ -658,50 +656,12 @@ class SerbowayApp(QMainWindow):
         # 샌드위치 선택 페이지(page1)로 이동
         self.stack.setCurrentIndex(1) # 스택 위젯의 인덱스 1번 페이지로 이동
 
-    def show_webview(self):
-        """웹뷰 표시 함수 (현재 미사용)"""
-        self.stack.addWidget(self.webview) # 웹뷰를 스택에 추가
-        self.stack.setCurrentWidget(self.webview) # 웹뷰를 현재 위젯으로 설정
-
-    def handle_payment_result(self, result):
-        """결제 결과 처리 함수"""
-        if result.get("status") == "paid": # 결제 완료 상태인 경우
-            self.save_order() # 주문 저장
-            self.show_confirmation() # 확인 페이지 표시
-
-    def save_order(self):
-        """주문 데이터 저장 함수"""
-        try:
-            order_data = {
-                "orders": self.server.current_order, # 현재 주문 데이터
-                "timestamp": datetime.now().isoformat(), # ISO 형식 타임스탬프
-                "receipt": "".join(random.choices(string.digits, k=8)), # 8자리 영수증 번호
-            }
-
-            filename = f"order_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json" # 파일명 생성
-            with open(filename, "w", encoding="utf-8") as f:
-                json.dump(order_data, f, ensure_ascii=False, indent=2) # JSON 파일로 저장
-            print(f"주문 데이터 로컬 저장 완료: {filename}")
-        except Exception as e:
-            print(f"주문 저장 오류: {e}")
-
-    def show_confirmation(self):
-        """확인 페이지 표시 함수"""
-        QMessageBox.information(
-            self, "주문 완료", "음성 주문이 정상적으로 처리되었습니다!"
-        ) # 주문 완료 메시지 표시
-
     def closeEvent(self, event):
         """창 종료 시 리소스 정리 함수"""
         try:
             # [Streamlit 연동 추가] Streamlit 프로세스 종료
             if self.streamlit_proc: # Streamlit 프로세스가 실행 중이면
                 self.streamlit_proc.terminate() # 프로세스 종료
-            
-            # TCP 서버 종료
-            if hasattr(self, "server") and self.server.socket: # TCP 서버가 실행 중이면
-                self.server.running = False # 실행 상태를 False로 설정
-                self.server.socket.close() # 소켓 닫기
         except Exception as e:
             print(f"종료 처리 오류: {e}")
         

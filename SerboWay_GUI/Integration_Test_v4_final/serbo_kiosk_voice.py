@@ -287,7 +287,10 @@ def get_order_summary(tool_input: str = "") -> str:
     order_state = st.session_state.order_state
     if not order_state.menu:
         return "아직 메뉴를 선택하지 않았습니다."
-    base_price = st.session_state.menu_data[order_state.menu]["price"]
+    menu_info = st.session_state.menu_data.get(order_state.menu)
+    if not menu_info:
+        return f"'{order_state.menu}' 메뉴 정보를 찾을 수 없습니다. 다시 주문해주세요."
+    base_price = menu_info["price"]
     veg_price = st.session_state.vegetable_data.get(order_state.vegetable, {}).get(
         "price", 0
     )
@@ -345,7 +348,10 @@ def send_order_to_kiosk() -> str:
     order_state = st.session_state.order_state
     if not order_state.menu:
         return "아직 메뉴를 선택하지 않았습니다."
-    base_price = st.session_state.menu_data[order_state.menu]["price"]
+    menu_info = st.session_state.menu_data.get(order_state.menu)
+    if not menu_info:
+        return f"'{order_state.menu}' 메뉴 정보를 찾을 수 없습니다."
+    base_price = menu_info["price"]
     veg_price = st.session_state.vegetable_data.get(order_state.vegetable, {}).get(
         "price", 0
     )
