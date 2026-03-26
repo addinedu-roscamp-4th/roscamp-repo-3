@@ -702,7 +702,6 @@ class SerbowayApp(QMainWindow):
 
         if self.voice_order_data: # 음성 주문 데이터가 있으면
             order = self.voice_order_data # 주문 데이터 참조
-            print(2) # 디버깅용 출력
             
             self.order_data = {"menu": []} # 주문 데이터 초기화
             

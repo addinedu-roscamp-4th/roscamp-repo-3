@@ -307,12 +307,6 @@ def get_order_summary(tool_input: str = "") -> str:
         f"총 결제 금액: {total}원"
     )
 
-    # print(type(order_state.table_number), order_state.table_number)
-    # print(type(order_state.menu), order_state.menu)
-    # print(type(order_state.sauce), order_state.sauce)
-    # print(type(order_state.vegetable), order_state.vegetable)
-    # print(type(order_state.cheese), order_state.cheese)
-
     return summary
 
 
@@ -327,10 +321,7 @@ def confirm_order(confirm: bool) -> str:
         order_data = (
             order_state.get_dict()
         )  # 주문 상태 객체를 딕셔너리 형태로 변환 (키오스크 호환 포맷)
-        st.write(
-            "[DEBUG] 전송할 주문 데이터:", order_data
-        )  # 디버깅용으로 전송할 데이터를 화면에 출력
-        # 조건문 삭제: 항상 전송
+        # 키오스크로 주문 전송
         send_result = send_order_to_kiosk.invoke(
             order_data
         )  # send_order_to_kiosk 도구를 호출하여 키오스크로 주문 전송
@@ -341,10 +332,8 @@ def confirm_order(confirm: bool) -> str:
 
 
 @tool
-# def send_order_to_kiosk(menu: str, sauce: str, vegetable: str, cheese: str, price: int, table_number: int = 1) -> str:
 def send_order_to_kiosk() -> str:
     """주문 정보를 키오스크로 전송합니다."""
-    # print("done!!!!!!!!!")
     order_state = st.session_state.order_state
     if not order_state.menu:
         return "아직 메뉴를 선택하지 않았습니다."
@@ -378,11 +367,6 @@ def send_order_to_kiosk() -> str:
             ),  # 현재 시간을 타임스탬프로 생성
         }
 
-        print(order_data)  # 콘솔에 주문 데이터 출력 (서버 로그용)
-        st.write(
-            f"[DEBUG] 전송할 주문 데이터: {json.dumps(order_data, ensure_ascii=False, indent=2)}"
-        )  # Streamlit 화면에 JSON 형태로 예쁘게 출력
-
         with socket.socket(
             socket.AF_INET, socket.SOCK_STREAM
         ) as client_socket:  # TCP 소켓 생성 (with문으로 자동 종료 보장)
@@ -393,36 +377,12 @@ def send_order_to_kiosk() -> str:
             response = client_socket.recv(1024).decode(
                 "utf-8"
             )  # 키오스크로부터 최대 1024바이트 응답을 받아 UTF-8로 디코딩
-            st.write(
-                f"[DEBUG] 키오스크 응답: {response}"
-            )  # 키오스크 응답을 화면에 출력
             return f"주문 전송 성공: {response}"  # 성공 메시지와 응답 내용 반환
 
     except Exception as e:  # 모든 예외 상황 처리
         error_msg = f"키오스크 전송 오류: {str(e)}"  # 오류 메시지 생성
         st.error(f"[ERROR] {error_msg}")  # Streamlit 화면에 빨간색 오류 메시지 표시
         return error_msg  # 오류 메시지 반환
-
-
-# 이 부분에서 주문 확정이 안 되고 있음
-# @tool
-# def confirm_order(confirm: bool) -> str:
-#     """주문을 확정하고 키오스크로 전송합니다."""
-#     order_state = st.session_state.order_state
-#     if confirm:
-#         order_state.confirmed = True
-#         order_data = order_state.get_dict()
-#         st.write("[DEBUG] 전송할 주문 데이터:", get_order_summary)
-#         if order_data["menu"]:
-#             send_result = send_order_to_kiosk.invoke(order_data)
-#             return (
-#                 f"주문이 완료되었습니다.\n{get_order_summary('')}\n(키오스크 응답: {send_result})"
-#             )
-#         else:
-#             return "❌ 주문 정보가 불완전합니다. 모든 항목을 선택해주세요."
-#     else:
-#         order_state.reset()
-#         return "🔄 주문을 처음부터 다시 시작합니다."
 
 
 def load_whisper_model():
