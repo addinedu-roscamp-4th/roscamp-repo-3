@@ -16,3 +16,6 @@ STREAMLIT_SCRIPT = os.getenv("STREAMLIT_SCRIPT", "serbo_kiosk_voice.py")
 
 # ============== 테이블/주문 설정 ==============
 TABLE_NUM = int(os.getenv("TABLE_NUM", "1"))
+
+# ============== Whisper 설정 ==============
+WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")

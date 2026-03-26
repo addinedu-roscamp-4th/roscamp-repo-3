@@ -34,6 +34,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from pydantic import BaseModel
 from typing import List
+from models import MenuItemSchema, OrderDataSchema
 
 # ================== API Load =====================
 from dotenv import load_dotenv
@@ -41,7 +42,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ============== 프로젝트 설정 ==============
-from config import KIOSK_HOST, KIOSK_PORT
+from config import KIOSK_HOST, KIOSK_PORT, WHISPER_MODEL
 
 RECORD_SECONDS = 5
 
@@ -114,24 +115,10 @@ def find_best_match(
     return None
 
 
-class MenuItem(BaseModel):
-    name: str
-    price: int
-    qty: int
-    sauce: str
-    vegetable: str
-    cheese: str
-
-
-class OrderData(BaseModel):
-    menu: List[MenuItem]
-    table_number: int
-    timestamp: str
-
-
 # ================== 주문 상태 관리 클래스 ==================
 class OrderState:
     def __init__(self, table_number=1):
+        self.items = []  # 완료된 주문 아이템 목록
         self.menu = None
         self.sauce = None
         self.vegetable = None
@@ -139,41 +126,48 @@ class OrderState:
         self.step = "menu"
         self.confirmed = False
         self.table_number = table_number
-        # 여러 항목 누적용(필요시)
-        # self.menu_items = []
+
+    def _calc_item_price(self, menu_name, vegetable, cheese):
+        base = st.session_state.menu_data.get(menu_name, {}).get("price", 0)
+        veg = st.session_state.vegetable_data.get(vegetable, {}).get("price", 0) if vegetable else 0
+        ch = st.session_state.cheese_data.get(cheese, {}).get("price", 0) if cheese else 0
+        return base + veg + ch
+
+    def save_current_item(self):
+        """현재 선택을 아이템 목록에 저장하고 현재 선택을 초기화"""
+        if self.menu:
+            self.items.append({
+                "name": self.menu,
+                "price": self._calc_item_price(self.menu, self.vegetable, self.cheese),
+                "qty": 1,
+                "sauce": self.sauce or "",
+                "vegetable": self.vegetable or "",
+                "cheese": self.cheese or "슬라이스 치즈",
+            })
+        self.menu = None
+        self.sauce = None
+        self.vegetable = None
+        self.cheese = "슬라이스 치즈"
+        self.step = "menu"
+
+    def get_all_items(self) -> list:
+        """완료된 아이템 + 현재 진행 중인 아이템을 합쳐서 반환"""
+        all_items = list(self.items)
+        if self.menu:
+            all_items.append({
+                "name": self.menu,
+                "price": self._calc_item_price(self.menu, self.vegetable, self.cheese),
+                "qty": 1,
+                "sauce": self.sauce or "",
+                "vegetable": self.vegetable or "",
+                "cheese": self.cheese or "슬라이스 치즈",
+            })
+        return all_items
 
     def get_dict(self) -> Dict[str, Any]:
         """키오스크와 호환되는 주문 데이터 포맷으로 변환"""
-        # None 값 처리 - 빈 문자열로 대체
-        menu_item = {
-            "name": self.menu or "",
-            "price": (
-                (
-                    st.session_state.menu_data.get(self.menu, {}).get("price", 0)
-                    if self.menu
-                    else 0
-                )
-                + (
-                    st.session_state.vegetable_data.get(self.vegetable, {}).get(
-                        "price", 0
-                    )
-                    if self.vegetable
-                    else 0
-                )
-                + (
-                    st.session_state.cheese_data.get(self.cheese, {}).get("price", 0)
-                    if self.cheese
-                    else 0
-                )
-            ),
-            "qty": 1,
-            "sauce": self.sauce or "",
-            "vegetable": self.vegetable or "",
-            "cheese": self.cheese or "슬라이스 치즈",
-        }
-
         return {
-            "menu": [menu_item],
+            "menu": self.get_all_items(),
             "table_number": self.table_number,
             "timestamp": datetime.now().strftime("%Y%m%d-%H%M%S"),
         }
@@ -280,113 +274,83 @@ def update_order(
 
 
 @tool
+def add_more_items(tool_input: str = "") -> str:
+    """현재 선택한 메뉴를 저장하고 추가 주문을 받습니다."""
+    order_state = st.session_state.order_state
+    if not order_state.menu:
+        return "아직 메뉴를 선택하지 않았습니다. 먼저 메뉴를 선택해주세요."
+    order_state.save_current_item()
+    return f"메뉴가 추가되었습니다. (현재 {len(order_state.items)}개)\n추가로 주문하실 메뉴를 말씀해주세요."
+
+
+@tool
 def get_order_summary(tool_input: str = "") -> str:
     """현재 주문 요약 정보를 반환합니다."""
     order_state = st.session_state.order_state
-    if not order_state.menu:
+    all_items = order_state.get_all_items()
+    if not all_items:
         return "아직 메뉴를 선택하지 않았습니다."
-    menu_info = st.session_state.menu_data.get(order_state.menu)
-    if not menu_info:
-        return f"'{order_state.menu}' 메뉴 정보를 찾을 수 없습니다. 다시 주문해주세요."
-    base_price = menu_info["price"]
-    veg_price = st.session_state.vegetable_data.get(order_state.vegetable, {}).get(
-        "price", 0
-    )
-    cheese_price = st.session_state.cheese_data.get(order_state.cheese, {}).get(
-        "price", 0
-    )
-    total = base_price + veg_price + cheese_price
-    summary = (
-        f"테이블 {order_state.table_number}번에서 주문했습니다.\n"
-        f"메뉴: {order_state.menu} ({base_price}원)\n"
-        f"소스: {order_state.sauce}\n"
-        f"야채: {order_state.vegetable} (+{veg_price}원)\n"
-        f"치즈: {order_state.cheese} (+{cheese_price}원)\n"
-        f"총 결제 금액: {total}원"
-    )
-
-    return summary
+    total = 0
+    lines = [f"테이블 {order_state.table_number}번 주문 내역:\n"]
+    for idx, item in enumerate(all_items, 1):
+        price = item["price"]
+        total += price * item.get("qty", 1)
+        lines.append(
+            f"[{idx}] {item['name']} - 소스: {item['sauce']}, "
+            f"야채: {item['vegetable']}, 치즈: {item['cheese']} "
+            f"({price}원 x{item.get('qty', 1)})"
+        )
+    lines.append(f"\n총 결제 금액: {total}원")
+    return "\n".join(lines)
 
 
 @tool
 def confirm_order(confirm: bool) -> str:
     """주문을 확정합니다."""
-    order_state = (
-        st.session_state.order_state
-    )  # Streamlit 세션에서 현재 주문 상태 객체를 가져옴
-    if confirm:  # 주문 확정이 True인 경우
-        order_state.confirmed = True  # 주문 상태를 확정됨으로 변경
-        order_data = (
-            order_state.get_dict()
-        )  # 주문 상태 객체를 딕셔너리 형태로 변환 (키오스크 호환 포맷)
-        # 키오스크로 주문 전송 (@tool은 매개변수 없으므로 빈 문자열 전달)
-        send_result = send_order_to_kiosk.invoke(
-            ""
-        )  # send_order_to_kiosk 도구를 호출하여 키오스크로 주문 전송
-        return f"주문이 완료되었습니다.\n{get_order_summary('')}\n(키오스크 응답: {send_result})"  # 주문 완료 메시지와 요약, 키오스크 응답을 조합하여 반환
-    else:  # 주문 확정이 False인 경우 (취소)
-        order_state.reset()  # 주문 상태를 초기화하여 처음부터 다시 시작
-        return "🔄 주문을 처음부터 다시 시작합니다."  # 재시작 메시지 반환
+    order_state = st.session_state.order_state
+    if confirm:
+        # 진행 중인 현재 아이템이 있으면 항목에 저장
+        if order_state.menu:
+            order_state.save_current_item()
+        if not order_state.items:
+            return "주문할 메뉴가 없습니다. 먼저 메뉴를 선택해주세요."
+        order_state.confirmed = True
+        send_result = send_order_to_kiosk.invoke("")
+        return f"주문이 완료되었습니다.\n{get_order_summary('')}\n(키오스크 응답: {send_result})"
+    else:
+        order_state.reset()
+        return "🔄 주문을 처음부터 다시 시작합니다."
 
 
 @tool
 def send_order_to_kiosk() -> str:
     """주문 정보를 키오스크로 전송합니다."""
     order_state = st.session_state.order_state
-    if not order_state.menu:
+    order_data = order_state.get_dict()
+    if not order_data["menu"]:
         return "아직 메뉴를 선택하지 않았습니다."
-    menu_info = st.session_state.menu_data.get(order_state.menu)
-    if not menu_info:
-        return f"'{order_state.menu}' 메뉴 정보를 찾을 수 없습니다."
-    base_price = menu_info["price"]
-    veg_price = st.session_state.vegetable_data.get(order_state.vegetable, {}).get(
-        "price", 0
-    )
-    cheese_price = st.session_state.cheese_data.get(order_state.cheese, {}).get(
-        "price", 0
-    )
-    total = base_price + veg_price + cheese_price
 
     try:
-        order_data = {  # 키오스크로 전송할 주문 데이터 딕셔너리 생성
-            "menu": [
-                {  # 메뉴 항목을 리스트 형태로 구성 (여러 메뉴 지원 가능)
-                    "name": order_state.menu,  # 선택한 메뉴 이름
-                    "price": total,  # 총 가격 (기본 가격 + 옵션 가격)
-                    "qty": 1,  # 수량 (현재는 항상 1개)
-                    "sauce": order_state.sauce,  # 선택한 소스
-                    "vegetable": order_state.vegetable,  # 선택한 야채
-                    "cheese": order_state.cheese,  # 선택한 치즈
-                }
-            ],
-            "table_number": order_state.table_number,  # 테이블 번호 (기본값 1)
-            "timestamp": datetime.now().strftime(
-                "%Y%m%d-%H%M%S"
-            ),  # 현재 시간을 타임스탬프로 생성
-        }
-
         with socket.socket(
             socket.AF_INET, socket.SOCK_STREAM
-        ) as client_socket:  # TCP 소켓 생성 (with문으로 자동 종료 보장)
-            client_socket.connect((KIOSK_HOST, KIOSK_PORT))  # 키오스크 서버에 연결
+        ) as client_socket:
+            client_socket.connect((KIOSK_HOST, KIOSK_PORT))
             client_socket.sendall(
                 json.dumps(order_data, ensure_ascii=False).encode("utf-8")
-            )  # 주문 데이터를 JSON 문자열로 변환 후 UTF-8로 인코딩하여 전송
-            response = client_socket.recv(1024).decode(
-                "utf-8"
-            )  # 키오스크로부터 최대 1024바이트 응답을 받아 UTF-8로 디코딩
-            return f"주문 전송 성공: {response}"  # 성공 메시지와 응답 내용 반환
+            )
+            response = client_socket.recv(1024).decode("utf-8")
+            return f"주문 전송 성공: {response}"
 
-    except Exception as e:  # 모든 예외 상황 처리
-        error_msg = f"키오스크 전송 오류: {str(e)}"  # 오류 메시지 생성
-        st.error(f"[ERROR] {error_msg}")  # Streamlit 화면에 빨간색 오류 메시지 표시
-        return error_msg  # 오류 메시지 반환
+    except Exception as e:
+        error_msg = f"키오스크 전송 오류: {str(e)}"
+        st.error(f"[ERROR] {error_msg}")
+        return error_msg
 
 
 def load_whisper_model():
     """Whisper 모델을 세션 상태에 초기화합니다."""
     if "whisper_model" not in st.session_state:
-        st.session_state.whisper_model = whisper.load_model("base")
+        st.session_state.whisper_model = whisper.load_model(WHISPER_MODEL)
     return st.session_state.whisper_model
 
 
@@ -470,6 +434,7 @@ def main():
         get_vegetable_list,
         get_cheese_list,
         update_order,
+        add_more_items,
         confirm_order,
         get_order_summary,
         send_order_to_kiosk,
