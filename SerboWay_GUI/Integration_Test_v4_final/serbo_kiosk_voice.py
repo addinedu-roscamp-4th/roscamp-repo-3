@@ -43,6 +43,8 @@ load_dotenv()
 # ============== 프로젝트 설정 ==============
 from config import KIOSK_HOST, KIOSK_PORT
 
+RECORD_SECONDS = 5
+
 
 # Langsmith  연결
 from langchain_teddynote import logging
@@ -431,7 +433,7 @@ def speech_to_text(tool_input: str = "") -> str:
         st.info("말씀해주세요", icon="🎤")
         sd.default.samplerate = 16000
         sd.default.channels = 1
-        recording = sd.rec(int(3 * 16000))
+        recording = sd.rec(int(RECORD_SECONDS * 16000))
         sd.wait()
         wav_path = "temp_whisper.wav"
         sf.write(wav_path, recording, 16000)
@@ -526,12 +528,18 @@ def main():
         initial_message = f"안녕하세요! Serboway입니다.\n\n{menu_list}\n\n어떤 메뉴를 주문하시겠습니까?"
         st.session_state.messages = [AIMessage(content=initial_message)]
 
-    # 채팅 메시지 표시 (voice_agent 포맷)
-    for msg in st.session_state.messages:
+    # 채팅 메시지 표시 (voice_agent 포맷) — TTS는 마지막 AI 메시지에만 적용
+    last_ai_idx = None
+    for i, msg in enumerate(st.session_state.messages):
+        if isinstance(msg, AIMessage):
+            last_ai_idx = i
+
+    for i, msg in enumerate(st.session_state.messages):
         if isinstance(msg, AIMessage):
             with st.chat_message("assistant"):
                 st.write(msg.content)
-                text_to_speech(msg.content)
+                if i == last_ai_idx:
+                    text_to_speech(msg.content)
         elif isinstance(msg, HumanMessage):
             with st.chat_message("user"):
                 st.write(msg.content)
