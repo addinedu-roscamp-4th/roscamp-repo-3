@@ -492,7 +492,10 @@ def main():
         initial_message = f"안녕하세요! Serboway입니다.\n\n{menu_list}\n\n어떤 메뉴를 주문하시겠습니까?"
         st.session_state.messages = [AIMessage(content=initial_message)]
 
-    # 채팅 메시지 표시 (voice_agent 포맷) — TTS는 마지막 AI 메시지에만 적용
+    # 채팅 메시지 표시 (voice_agent 포맷) — TTS는 새로 추가된 마지막 AI 메시지에만 적용
+    if "last_spoken_idx" not in st.session_state:
+        st.session_state.last_spoken_idx = -1
+
     last_ai_idx = None
     for i, msg in enumerate(st.session_state.messages):
         if isinstance(msg, AIMessage):
@@ -502,8 +505,9 @@ def main():
         if isinstance(msg, AIMessage):
             with st.chat_message("assistant"):
                 st.write(msg.content)
-                if i == last_ai_idx:
+                if i == last_ai_idx and i != st.session_state.last_spoken_idx:
                     text_to_speech(msg.content)
+                    st.session_state.last_spoken_idx = i
         elif isinstance(msg, HumanMessage):
             with st.chat_message("user"):
                 st.write(msg.content)
