@@ -55,8 +55,6 @@ logging.langsmith("kiosk_voice")
 # =============== memory 설정 =============
 from langgraph.checkpoint.memory import MemorySaver
 
-# from langgraph.checkpoint.memory import MemorySaver
-
 # 메모리 설정
 memory = MemorySaver()
 
@@ -312,7 +310,7 @@ def get_order_summary(tool_input: str = "") -> str:
 
 @tool
 def confirm_order(confirm: bool) -> str:
-    """주문을 확정합니다.."""
+    """주문을 확정합니다."""
     order_state = (
         st.session_state.order_state
     )  # Streamlit 세션에서 현재 주문 상태 객체를 가져옴
@@ -321,9 +319,9 @@ def confirm_order(confirm: bool) -> str:
         order_data = (
             order_state.get_dict()
         )  # 주문 상태 객체를 딕셔너리 형태로 변환 (키오스크 호환 포맷)
-        # 키오스크로 주문 전송
+        # 키오스크로 주문 전송 (@tool은 매개변수 없으므로 빈 문자열 전달)
         send_result = send_order_to_kiosk.invoke(
-            order_data
+            ""
         )  # send_order_to_kiosk 도구를 호출하여 키오스크로 주문 전송
         return f"주문이 완료되었습니다.\n{get_order_summary('')}\n(키오스크 응답: {send_result})"  # 주문 완료 메시지와 요약, 키오스크 응답을 조합하여 반환
     else:  # 주문 확정이 False인 경우 (취소)
@@ -464,7 +462,7 @@ def initialize_agent(tools: list):
 # ===================== 메인 앱 (voice_agent UI 포맷) =====================
 def main():
     st.set_page_config(page_title="서보웨이 AI 주문", page_icon="🥪")
-    st.image("image/menu.png")
+    st.image("image/Menu.png")
 
     tools = [
         get_menu_list,
