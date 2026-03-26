@@ -18,6 +18,9 @@ import socket # 네트워크 통신(음성 주문-키오스크 간 TCP 통신)
 # import serial # 시리얼 통신 (RFID 아두이노와 통신용) — RFID 미사용으로 주석 처리
 import signal # 신호 처리(프로세스 제어)
 
+# ============== 프로젝트 설정 ==============
+from config import ORDER_SERVER_URL, KIOSK_HOST, KIOSK_PORT, STREAMLIT_PORT, STREAMLIT_SCRIPT, TABLE_NUM
+
 # ============== PyQt 모듈 ==================
 from PyQt5.QtWidgets import (
     QApplication, # PyQt 애플리케이션 메인 클래스
@@ -36,24 +39,29 @@ from PyQt5.QtCore import Qt, QSize # Qt 코어 기능
 from PyQt5.QtCore import QLoggingCategory # 로깅 카테고리
 from PyQt5.QtCore import QEvent # 이벤트 처리
 
+# ============== 데이터 검증 모델 ==============
+from pydantic import BaseModel, ValidationError
+from typing import List as PydanticList
+
+class MenuItemSchema(BaseModel):
+    name: str
+    price: int
+    qty: int
+    sauce: str
+    vegetable: str
+    cheese: str
+
+class OrderDataSchema(BaseModel):
+    menu: PydanticList[MenuItemSchema]
+    table_number: int
+    timestamp: str
+
 # 음성 주문 이벤트 클래스 정의
 class VoiceOrderEvent(QEvent):
     def __init__(self):
         super().__init__(QEvent.User) # 사용자 정의 이벤트 타입
 
-# ============== 메인 서버 설정 ================
-# ORDER_SERVER_URL = "http://192.168.0.6:5003/" # 주문 전송 API 주소
-# ORDER_SERVER_URL = "http://192.168.55.177:5003" # 대체 서버 주소
-# ORDER_SERVER_URL = " http://192.168.0.136:5003" # 대체 서버 주소
-ORDER_SERVER_URL = "http://192.168.0.145:5004"    # SR
-
-
-# ============ Streamlit 설정 =============
-STREAMLIT_PORT = 8501 # Streamlit 서버 포트
-STREAMLIT_SCRIPT = "Serboway_voice_order.py" # 음성 에이전트 스크립트 경로
-
-# Table Number 고정
-TABLE_NUM = 1 # 테이블 번호 (고정값)
+# 설정값은 config.py에서 로드됨 (ORDER_SERVER_URL, KIOSK_HOST, KIOSK_PORT, STREAMLIT_PORT, STREAMLIT_SCRIPT, TABLE_NUM)
 
 # ========= 메인 서버와 통신 ============
 def send_order_to_server(order_data):
@@ -701,15 +709,9 @@ class SerbowayApp(QMainWindow):
 
     def run_tcp_server(self):
         """TCP 서버 실행 함수 (음성 주문 수신용)"""
-        # KIOSK_HOST = "192.168.0.55" # 키오스크 호스트 IP (주석 처리됨)
-        # KIOSK_HOST = "192.168.55.177" # 현재 사용 중인 키오스크 호스트 IP
-        KIOSK_HOST = "192.168.0.159"
-        # KIOSK_PORT = 650 # 포트 (주석 처리됨)
-        KIOSK_PORT = 5050 # 현재 사용 중인 포트
-
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s: # TCP 소켓 생성
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1) # 소켓 재사용 옵션 설정
-            s.bind((KIOSK_HOST, KIOSK_PORT)) # 호스트와 포트에 바인딩
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind((KIOSK_HOST, KIOSK_PORT))
             s.listen(1) # 연결 대기 (최대 1개 연결)
             
             while True: # 무한 루프로 연결 대기
@@ -719,12 +721,17 @@ class SerbowayApp(QMainWindow):
                     if data: # 데이터가 있으면
                         try:
                             order_json = json.loads(data.decode()) # JSON 데이터 파싱
-                            self.voice_order_data = order_json # 음성 주문 데이터 저장
+                            validated = OrderDataSchema(**order_json) # Pydantic 스키마 검증
+                            self.voice_order_data = validated.model_dump() # 검증된 데이터 저장
                             conn.sendall(b"received") # 수신 확인 응답
                             
                             # 주문 UI 반영을 위한 이벤트 발송
                             QApplication.postEvent(self, VoiceOrderEvent()) # 사용자 정의 이벤트 발송
-                        except Exception: # JSON 파싱 오류 등
+                        except (json.JSONDecodeError, ValidationError) as e:
+                            print(f"TCP 수신 데이터 검증 실패: {e}")
+                            conn.sendall(b"fail") # 실패 응답
+                        except Exception as e:
+                            print(f"TCP 서버 오류: {e}")
                             conn.sendall(b"fail") # 실패 응답
 
     def process_voice_order(self):

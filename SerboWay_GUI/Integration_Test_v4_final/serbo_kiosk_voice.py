@@ -40,6 +40,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# ============== 프로젝트 설정 ==============
+from config import KIOSK_HOST, KIOSK_PORT
+
 
 # Langsmith  연결
 from langchain_teddynote import logging
@@ -348,33 +351,8 @@ def send_order_to_kiosk() -> str:
         "price", 0
     )
     total = base_price + veg_price + cheese_price
-    # summary = (
-    #     f"테이블 {order_state.table_number}번에서 주문했습니다.\n"
-    #     f"메뉴: {order_state.menu} ({base_price}원)\n"
-    #     f"소스: {order_state.sauce}\n"
-    #     f"야채: {order_state.vegetable} (+{veg_price}원)\n"
-    #     f"치즈: {order_state.cheese} (+{cheese_price}원)\n"
-    #     f"총 결제 금액: {total}원"
-    # )
 
-    KIOSK_HOST = "192.168.0.159"  # 키오스크 서버의 IP 주소 설정
-    # KIOSK_PORT = 650  # 키오스크 서버의 포트 번호 설정
-    KIOSK_PORT = 5050  # 키오스크 서버의 포트 번호 설정
-
-    try:  # 예외 처리 시작
-        # # 주문 데이터 구성
-        # order_data = {  # 키오스크로 전송할 주문 데이터 딕셔너리 생성
-        #     "menu": [{  # 메뉴 항목을 리스트 형태로 구성 (여러 메뉴 지원 가능)
-        #         "name": menu,  # 선택한 메뉴 이름
-        #         "price": total,  # 총 가격 (기본 가격 + 옵션 가격)
-        #         "qty": 1,  # 수량 (현재는 항상 1개)
-        #         "sauce": sauce,  # 선택한 소스
-        #         "vegetable": vegetable,  # 선택한 야채
-        #         "cheese": cheese  # 선택한 치즈
-        #     }],
-        #     "table_number": table_number,  # 테이블 번호 (기본값 1)
-        #     "timestamp": datetime.now().strftime("%Y%m%d-%H%M%S")  # 현재 시간을 타임스탬프로 생성
-        # }
+    try:
         order_data = {  # 키오스크로 전송할 주문 데이터 딕셔너리 생성
             "menu": [
                 {  # 메뉴 항목을 리스트 형태로 구성 (여러 메뉴 지원 가능)
