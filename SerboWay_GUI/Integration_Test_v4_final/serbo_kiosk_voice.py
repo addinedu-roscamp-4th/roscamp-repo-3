@@ -35,13 +35,30 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from pydantic import BaseModel
 from typing import List
 
+# ================== API Load =====================
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# ============== 프로젝트 설정 ==============
+from config import KIOSK_HOST, KIOSK_PORT
+
+RECORD_SECONDS = 5
+
+
+# Langsmith  연결
 from langchain_teddynote import logging
 
-# 프로젝트 이름을 입력합니다.
 logging.langsmith("kiosk_voice")
+
+
+# =============== memory 설정 =============
+from langgraph.checkpoint.memory import MemorySaver
+
+# from langgraph.checkpoint.memory import MemorySaver
+
+# 메모리 설정
+memory = MemorySaver()
 
 
 # ===================== 메뉴 데이터 로드 =====================
@@ -270,7 +287,10 @@ def get_order_summary(tool_input: str = "") -> str:
     order_state = st.session_state.order_state
     if not order_state.menu:
         return "아직 메뉴를 선택하지 않았습니다."
-    base_price = st.session_state.menu_data[order_state.menu]["price"]
+    menu_info = st.session_state.menu_data.get(order_state.menu)
+    if not menu_info:
+        return f"'{order_state.menu}' 메뉴 정보를 찾을 수 없습니다. 다시 주문해주세요."
+    base_price = menu_info["price"]
     veg_price = st.session_state.vegetable_data.get(order_state.vegetable, {}).get(
         "price", 0
     )
@@ -287,12 +307,6 @@ def get_order_summary(tool_input: str = "") -> str:
         f"총 결제 금액: {total}원"
     )
 
-    # print(type(order_state.table_number), order_state.table_number)
-    # print(type(order_state.menu), order_state.menu)
-    # print(type(order_state.sauce), order_state.sauce)
-    # print(type(order_state.vegetable), order_state.vegetable)
-    # print(type(order_state.cheese), order_state.cheese)
-
     return summary
 
 
@@ -307,10 +321,7 @@ def confirm_order(confirm: bool) -> str:
         order_data = (
             order_state.get_dict()
         )  # 주문 상태 객체를 딕셔너리 형태로 변환 (키오스크 호환 포맷)
-        st.write(
-            "[DEBUG] 전송할 주문 데이터:", order_data
-        )  # 디버깅용으로 전송할 데이터를 화면에 출력
-        # 조건문 삭제: 항상 전송
+        # 키오스크로 주문 전송
         send_result = send_order_to_kiosk.invoke(
             order_data
         )  # send_order_to_kiosk 도구를 호출하여 키오스크로 주문 전송
@@ -321,14 +332,15 @@ def confirm_order(confirm: bool) -> str:
 
 
 @tool
-# def send_order_to_kiosk(menu: str, sauce: str, vegetable: str, cheese: str, price: int, table_number: int = 1) -> str:
 def send_order_to_kiosk() -> str:
     """주문 정보를 키오스크로 전송합니다."""
-    # print("done!!!!!!!!!")
     order_state = st.session_state.order_state
     if not order_state.menu:
         return "아직 메뉴를 선택하지 않았습니다."
-    base_price = st.session_state.menu_data[order_state.menu]["price"]
+    menu_info = st.session_state.menu_data.get(order_state.menu)
+    if not menu_info:
+        return f"'{order_state.menu}' 메뉴 정보를 찾을 수 없습니다."
+    base_price = menu_info["price"]
     veg_price = st.session_state.vegetable_data.get(order_state.vegetable, {}).get(
         "price", 0
     )
@@ -336,33 +348,8 @@ def send_order_to_kiosk() -> str:
         "price", 0
     )
     total = base_price + veg_price + cheese_price
-    # summary = (
-    #     f"테이블 {order_state.table_number}번에서 주문했습니다.\n"
-    #     f"메뉴: {order_state.menu} ({base_price}원)\n"
-    #     f"소스: {order_state.sauce}\n"
-    #     f"야채: {order_state.vegetable} (+{veg_price}원)\n"
-    #     f"치즈: {order_state.cheese} (+{cheese_price}원)\n"
-    #     f"총 결제 금액: {total}원"
-    # )
 
-    KIOSK_HOST = "192.168.0.159"  # 키오스크 서버의 IP 주소 설정
-    # KIOSK_PORT = 650  # 키오스크 서버의 포트 번호 설정
-    KIOSK_PORT = 5050  # 키오스크 서버의 포트 번호 설정
-
-    try:  # 예외 처리 시작
-        # # 주문 데이터 구성
-        # order_data = {  # 키오스크로 전송할 주문 데이터 딕셔너리 생성
-        #     "menu": [{  # 메뉴 항목을 리스트 형태로 구성 (여러 메뉴 지원 가능)
-        #         "name": menu,  # 선택한 메뉴 이름
-        #         "price": total,  # 총 가격 (기본 가격 + 옵션 가격)
-        #         "qty": 1,  # 수량 (현재는 항상 1개)
-        #         "sauce": sauce,  # 선택한 소스
-        #         "vegetable": vegetable,  # 선택한 야채
-        #         "cheese": cheese  # 선택한 치즈
-        #     }],
-        #     "table_number": table_number,  # 테이블 번호 (기본값 1)
-        #     "timestamp": datetime.now().strftime("%Y%m%d-%H%M%S")  # 현재 시간을 타임스탬프로 생성
-        # }
+    try:
         order_data = {  # 키오스크로 전송할 주문 데이터 딕셔너리 생성
             "menu": [
                 {  # 메뉴 항목을 리스트 형태로 구성 (여러 메뉴 지원 가능)
@@ -380,11 +367,6 @@ def send_order_to_kiosk() -> str:
             ),  # 현재 시간을 타임스탬프로 생성
         }
 
-        print(order_data)  # 콘솔에 주문 데이터 출력 (서버 로그용)
-        st.write(
-            f"[DEBUG] 전송할 주문 데이터: {json.dumps(order_data, ensure_ascii=False, indent=2)}"
-        )  # Streamlit 화면에 JSON 형태로 예쁘게 출력
-
         with socket.socket(
             socket.AF_INET, socket.SOCK_STREAM
         ) as client_socket:  # TCP 소켓 생성 (with문으로 자동 종료 보장)
@@ -395,36 +377,12 @@ def send_order_to_kiosk() -> str:
             response = client_socket.recv(1024).decode(
                 "utf-8"
             )  # 키오스크로부터 최대 1024바이트 응답을 받아 UTF-8로 디코딩
-            st.write(
-                f"[DEBUG] 키오스크 응답: {response}"
-            )  # 키오스크 응답을 화면에 출력
             return f"주문 전송 성공: {response}"  # 성공 메시지와 응답 내용 반환
 
     except Exception as e:  # 모든 예외 상황 처리
         error_msg = f"키오스크 전송 오류: {str(e)}"  # 오류 메시지 생성
         st.error(f"[ERROR] {error_msg}")  # Streamlit 화면에 빨간색 오류 메시지 표시
         return error_msg  # 오류 메시지 반환
-
-
-# 이 부분에서 주문 확정이 안 되고 있음
-# @tool
-# def confirm_order(confirm: bool) -> str:
-#     """주문을 확정하고 키오스크로 전송합니다."""
-#     order_state = st.session_state.order_state
-#     if confirm:
-#         order_state.confirmed = True
-#         order_data = order_state.get_dict()
-#         st.write("[DEBUG] 전송할 주문 데이터:", get_order_summary)
-#         if order_data["menu"]:
-#             send_result = send_order_to_kiosk.invoke(order_data)
-#             return (
-#                 f"주문이 완료되었습니다.\n{get_order_summary('')}\n(키오스크 응답: {send_result})"
-#             )
-#         else:
-#             return "❌ 주문 정보가 불완전합니다. 모든 항목을 선택해주세요."
-#     else:
-#         order_state.reset()
-#         return "🔄 주문을 처음부터 다시 시작합니다."
 
 
 def load_whisper_model():
@@ -441,7 +399,7 @@ def speech_to_text(tool_input: str = "") -> str:
         st.info("말씀해주세요", icon="🎤")
         sd.default.samplerate = 16000
         sd.default.channels = 1
-        recording = sd.rec(int(3 * 16000))
+        recording = sd.rec(int(RECORD_SECONDS * 16000))
         sd.wait()
         wav_path = "temp_whisper.wav"
         sf.write(wav_path, recording, 16000)
@@ -527,7 +485,7 @@ def main():
         load_whisper_model()
         st.session_state.agent = initialize_agent(tools)
         st.session_state.agent_executor = AgentExecutor(
-            agent=st.session_state.agent, tools=tools, verbose=True
+            agent=st.session_state.agent, tools=tools, verbose=True, checkpointer=memory
         )
         # 세션 상태 및 에이전트 초기화
     if "messages" not in st.session_state:  # ← 들여쓰기 수정 (공백 4개)
@@ -536,12 +494,18 @@ def main():
         initial_message = f"안녕하세요! Serboway입니다.\n\n{menu_list}\n\n어떤 메뉴를 주문하시겠습니까?"
         st.session_state.messages = [AIMessage(content=initial_message)]
 
-    # 채팅 메시지 표시 (voice_agent 포맷)
-    for msg in st.session_state.messages:
+    # 채팅 메시지 표시 (voice_agent 포맷) — TTS는 마지막 AI 메시지에만 적용
+    last_ai_idx = None
+    for i, msg in enumerate(st.session_state.messages):
+        if isinstance(msg, AIMessage):
+            last_ai_idx = i
+
+    for i, msg in enumerate(st.session_state.messages):
         if isinstance(msg, AIMessage):
             with st.chat_message("assistant"):
                 st.write(msg.content)
-                text_to_speech(msg.content)
+                if i == last_ai_idx:
+                    text_to_speech(msg.content)
         elif isinstance(msg, HumanMessage):
             with st.chat_message("user"):
                 st.write(msg.content)

@@ -2,21 +2,22 @@
 import sys # 시스템 관련 기능(프로그램 종료, 경로 조작 등)
 import os # 운영체제 인터페이스(파일 경로, 환경변수 등)
 import json # JSON 데이터 처리
-import random # 난수 생성(영수증 번호 생성용)
-import string # 문자열 유틸리티(영수증 번호 생성용)
 import subprocess # 외부 프로세스 실행(Streamlit 서버 실행)
 from datetime import datetime # 시간 관련 기능(주문 타임스탬프)
 from typing import Optional, Dict, Any, List # 타입 힌트
 import time # 시간 지연 처리
-import struct
+# import struct  # RFID 미사용으로 주석 처리
 
 # ============= 통신 모듈 ============
 import requests # HTTP 요청 처리(메인 서버 API 호출)
 import webbrowser # [Streamlit 연동 추가] 웹브라우저 띄우기
 import threading # 멀티스레딩 처리
 import socket # 네트워크 통신(음성 주문-키오스크 간 TCP 통신)
-import serial # 시리얼 통신 (RFID 아두이노와 통신용)
+# import serial # 시리얼 통신 (RFID 아두이노와 통신용) — RFID 미사용으로 주석 처리
 import signal # 신호 처리(프로세스 제어)
+
+# ============== 프로젝트 설정 ==============
+from config import ORDER_SERVER_URL, KIOSK_HOST, KIOSK_PORT, STREAMLIT_PORT, STREAMLIT_SCRIPT, TABLE_NUM
 
 # ============== PyQt 모듈 ==================
 from PyQt5.QtWidgets import (
@@ -36,24 +37,29 @@ from PyQt5.QtCore import Qt, QSize # Qt 코어 기능
 from PyQt5.QtCore import QLoggingCategory # 로깅 카테고리
 from PyQt5.QtCore import QEvent # 이벤트 처리
 
+# ============== 데이터 검증 모델 ==============
+from pydantic import BaseModel, ValidationError
+from typing import List as PydanticList
+
+class MenuItemSchema(BaseModel):
+    name: str
+    price: int
+    qty: int
+    sauce: str
+    vegetable: str
+    cheese: str
+
+class OrderDataSchema(BaseModel):
+    menu: PydanticList[MenuItemSchema]
+    table_number: int
+    timestamp: str
+
 # 음성 주문 이벤트 클래스 정의
 class VoiceOrderEvent(QEvent):
     def __init__(self):
         super().__init__(QEvent.User) # 사용자 정의 이벤트 타입
 
-# ============== 메인 서버 설정 ================
-# ORDER_SERVER_URL = "http://192.168.0.6:5003/" # 주문 전송 API 주소
-# ORDER_SERVER_URL = "http://192.168.55.177:5003" # 대체 서버 주소
-# ORDER_SERVER_URL = " http://192.168.0.136:5003" # 대체 서버 주소
-ORDER_SERVER_URL = "http://192.168.0.145:5004"    # SR
-
-
-# ============ Streamlit 설정 =============
-STREAMLIT_PORT = 8501 # Streamlit 서버 포트
-STREAMLIT_SCRIPT = "Serboway_voice_order.py" # 음성 에이전트 스크립트 경로
-
-# Table Number 고정
-TABLE_NUM = 1 # 테이블 번호 (고정값)
+# 설정값은 config.py에서 로드됨 (ORDER_SERVER_URL, KIOSK_HOST, KIOSK_PORT, STREAMLIT_PORT, STREAMLIT_SCRIPT, TABLE_NUM)
 
 # ========= 메인 서버와 통신 ============
 def send_order_to_server(order_data):
@@ -101,80 +107,69 @@ def get_menu_json(server_url=ORDER_SERVER_URL, local_file="menu.json"):
     print("메뉴 데이터를 불러오지 못했습니다. 기본 구조를 사용합니다.")
     return {"menu": {}, "sauce": {}, "vegetable": {}, "cheese": {}} # 빈 메뉴 구조 반환
 
-# RFID 컨트롤러 클래스 정의
-# test_kiosk.py의 RFIDController 클래스 수정
-import struct
-
-class RFIDController:
-    def __init__(self, port='/dev/ttyACM0', baudrate=9600):
-        """RFID 컨트롤러 초기화"""
-        try:
-            self.ser = serial.Serial(port, baudrate, timeout=1)
-            time.sleep(2)
-            self.uid = bytes(4)  # UID 저장용
-            print("RFID 컨트롤러 연결 성공")
-        except Exception as e:
-            print(f"RFID 컨트롤러 연결 실패: {e}")
-            self.ser = None
-
-    def send_command(self, command, data=0):
-        """rfid_test.py와 동일한 명령 전송 방식"""
-        if not self.ser:
-            return None
-        
-        req_data = struct.pack('<2s4sic', command, self.uid, data, b'\n')
-        self.ser.write(req_data)
-        return self.ser.read_until(b'\n')
-
-    def detect_card(self):
-        """카드 감지"""
-        response = self.send_command(b'GS')
-        if response and len(response) > 6:
-            response = response[:-2]  # 마지막 \r\n 제거
-            cmd = response[:2].decode()
-            if cmd == 'GS' and response[2] == 0:
-                self.uid = response[3:]
-                return True
-        return False
-
-    def get_card_balance(self):
-        """카드 잔액 조회 (UID 파라미터 제거)"""
-        if not self.detect_card():
-            return None
-        
-        response = self.send_command(b'GT')
-        if response and len(response) > 6:
-            response = response[:-2]
-            cmd = response[:2].decode()
-            if cmd == 'GT' and response[2] == 0:
-                balance = int.from_bytes(response[3:7], 'little')
-                return balance
-        return None
-
-    def set_balance(self, amount):
-        """카드 잔액 설정 (charge_card 대신)"""
-        response = self.send_command(b'ST', amount)
-        if response and len(response) >= 3:
-            response = response[:-2]
-            return len(response) >= 3 and response[2] == 0
-        return False
-
-    def deduct_amount(self, amount):
-        """카드에서 금액 차감 (UID 파라미터 제거)"""
-        current_balance = self.get_card_balance()
-        if current_balance is None:
-            return False, "카드 읽기 실패"
-        
-        if current_balance < amount:
-            return False, "잔액 부족"
-        
-        new_balance = current_balance - amount
-        success = self.set_balance(new_balance)
-        
-        if success:
-            return True, f"결제 완료. 잔액: {new_balance}원"
-        else:
-            return False, "결제 처리 실패"
+# ===================== RFID 컨트롤러 (현재 미사용 — 하드웨어 없음) =====================
+# import struct
+#
+# class RFIDController:
+#     def __init__(self, port='/dev/ttyACM0', baudrate=9600):
+#         """RFID 컨트롤러 초기화"""
+#         try:
+#             self.ser = serial.Serial(port, baudrate, timeout=1)
+#             time.sleep(2)
+#             self.uid = bytes(4)
+#             print("RFID 컨트롤러 연결 성공")
+#         except Exception as e:
+#             print(f"RFID 컨트롤러 연결 실패: {e}")
+#             self.ser = None
+#
+#     def send_command(self, command, data=0):
+#         if not self.ser:
+#             return None
+#         req_data = struct.pack('<2s4sic', command, self.uid, data, b'\n')
+#         self.ser.write(req_data)
+#         return self.ser.read_until(b'\n')
+#
+#     def detect_card(self):
+#         response = self.send_command(b'GS')
+#         if response and len(response) > 6:
+#             response = response[:-2]
+#             cmd = response[:2].decode()
+#             if cmd == 'GS' and response[2] == 0:
+#                 self.uid = response[3:]
+#                 return True
+#         return False
+#
+#     def get_card_balance(self):
+#         if not self.detect_card():
+#             return None
+#         response = self.send_command(b'GT')
+#         if response and len(response) > 6:
+#             response = response[:-2]
+#             cmd = response[:2].decode()
+#             if cmd == 'GT' and response[2] == 0:
+#                 balance = int.from_bytes(response[3:7], 'little')
+#                 return balance
+#         return None
+#
+#     def set_balance(self, amount):
+#         response = self.send_command(b'ST', amount)
+#         if response and len(response) >= 3:
+#             response = response[:-2]
+#             return len(response) >= 3 and response[2] == 0
+#         return False
+#
+#     def deduct_amount(self, amount):
+#         current_balance = self.get_card_balance()
+#         if current_balance is None:
+#             return False, "카드 읽기 실패"
+#         if current_balance < amount:
+#             return False, "잔액 부족"
+#         new_balance = current_balance - amount
+#         success = self.set_balance(new_balance)
+#         if success:
+#             return True, f"결제 완료. 잔액: {new_balance}원"
+#         else:
+#             return False, "결제 처리 실패"
 
 # 메인 키오스크 애플리케이션 클래스
 class SerbowayApp(QMainWindow):
@@ -204,10 +199,11 @@ class SerbowayApp(QMainWindow):
         self.selected_vegetable = None # 선택된 야채
         self.selected_cheese = None # 선택된 치즈
 
-        # RFID 컨트롤러 초기화
-        self.rfid_controller = RFIDController() # RFID 컨트롤러 객체 생성
+        # RFID 컨트롤러 초기화 — 현재 RFID 미사용으로 주석 처리
+        # self.rfid_controller = RFIDController()
+        self.rfid_controller = None  # RFID 미사용
         self.total_order_amount = 0 # 총 주문 금액
-        self.CHARGE_AMOUNT = 500000 # 초기 충전 금액 3만원으로 설정
+        # self.CHARGE_AMOUNT = 500000 # RFID 미사용으로 주석 처리
 
         # [Streamlit 연동 추가] Streamlit 프로세스 핸들 저장
         self.streamlit_proc = None # Streamlit 프로세스 객체
@@ -281,20 +277,18 @@ class SerbowayApp(QMainWindow):
         if pay_btn: # 결제 버튼이 존재하면
             pay_btn.clicked.connect(self.go_to_payment) # 결제 페이지 이동 함수와 연결
 
-        # ========== 결제 페이지 버튼 ==========
-        rfid_btn = btn(self.page6, "rfidBtn") # RFID 결제 버튼
-        if rfid_btn: # RFID 버튼이 존재하면
-            rfid_btn.clicked.connect(self.show_rfid_page) # RFID 페이지 표시 함수와 연결
+        # ========== 결제 페이지 버튼 (RFID 미사용으로 주석 처리) ==========
+        # rfid_btn = btn(self.page6, "rfidBtn")
+        # if rfid_btn:
+        #     rfid_btn.clicked.connect(self.show_rfid_page)
 
-        # ========== RFID 페이지 버튼들 연결 ==========
-        reset_btn = self.page11.findChild(QPushButton, "resetButton", Qt.FindChildrenRecursively) # 충전 버튼
-        payment_btn = self.page11.findChild(QPushButton, "paymentButton", Qt.FindChildrenRecursively) # 결제 버튼
-        
-        if reset_btn: # 충전 버튼이 존재하면
-            reset_btn.clicked.connect(self.reset_rfid_card) # 카드 충전 함수와 연결
-        
-        if payment_btn: # 결제 버튼이 존재하면
-            payment_btn.clicked.connect(self.process_rfid_payment) # RFID 결제 처리 함수와 연결
+        # ========== RFID 페이지 버튼들 연결 (RFID 미사용으로 주석 처리) ==========
+        # reset_btn = self.page11.findChild(QPushButton, "resetButton", Qt.FindChildrenRecursively)
+        # payment_btn = self.page11.findChild(QPushButton, "paymentButton", Qt.FindChildrenRecursively)
+        # if reset_btn:
+        #     reset_btn.clicked.connect(self.reset_rfid_card)
+        # if payment_btn:
+        #     payment_btn.clicked.connect(self.process_rfid_payment)
 
         # ========== 나머지 페이지 버튼들 ==========
         # 8_order_complete.ui - OK 버튼
@@ -332,78 +326,61 @@ class SerbowayApp(QMainWindow):
             total += item["price"] * item["qty"] # (가격 × 수량)을 총 금액에 추가
         return total # 총 금액 반환
 
-    def show_rfid_page(self):
-        """RFID 페이지로 이동하면서 주문 금액 표시"""
-        # 총 금액 계산
-        total_amount = self.calculate_total_amount() # 현재 주문의 총 금액 계산
-        
-        # totalLabel에 주문 금액 표시 (오타 수정: findChild)
-        total_label = self.page11.findChild(QLabel, "totalLabel", Qt.FindChildrenRecursively)
-        if total_label: # 라벨이 존재하면
-            total_label.setText(f"주문 금액: {total_amount:,}원") # 주문 금액 텍스트 설정
-        
-        # paymentEdit에 주문 금액 미리 입력
-        payment_edit = self.page11.findChild(QLineEdit, "paymentEdit", Qt.FindChildrenRecursively)
-        if payment_edit: # 입력 필드가 존재하면
-            payment_edit.setText(str(total_amount)) # 주문 금액을 입력 필드에 설정
-        
-        # RFID 페이지로 이동
-        self.stack.setCurrentIndex(11) # 스택 위젯의 11번 페이지(RFID 페이지)로 이동
-
-    def process_rfid_payment(self):
-        """RFID 카드 결제 처리 함수"""
-        if not self.rfid_controller.ser:
-            QMessageBox.warning(self, "오류", "RFID 리더기가 연결되지 않았습니다.")
-            return
-
-        total_amount = self.calculate_total_amount()
-        if total_amount <= 0:
-            QMessageBox.warning(self, "오류", "주문 금액이 없습니다.")
-            return
-
-        QMessageBox.information(self, "카드 결제", "결제할 카드를 리더기에 올려주세요.")
-
-        try:
-            # 카드 감지 및 결제 처리
-            success, message = self.rfid_controller.deduct_amount(total_amount)
-            
-            if success:
-                QMessageBox.information(self, "결제 완료", message)
-                self.complete_order()
-            else:
-                if "잔액 부족" in message:
-                    reply = QMessageBox.question(
-                        self, "잔액 부족",
-                        f"{message}\n충전하시겠습니까?",
-                        QMessageBox.Yes | QMessageBox.No
-                    )
-                    if reply == QMessageBox.Yes:
-                        self.reset_rfid_card()
-                else:
-                    QMessageBox.warning(self, "결제 실패", message)
-
-        except Exception as e:
-            QMessageBox.warning(self, "오류", f"결제 처리 중 오류가 발생했습니다: {e}")
-
-    def reset_rfid_card(self):
-        """RFID 카드 충전 함수"""
-        if not self.rfid_controller.ser:
-            QMessageBox.warning(self, "오류", "RFID 리더기가 연결되지 않았습니다.")
-            return
-
-        QMessageBox.information(self, "카드 충전", "카드를 리더기에 올려주세요.")
-
-        try:
-            if self.rfid_controller.detect_card():
-                if self.rfid_controller.set_balance(self.CHARGE_AMOUNT):
-                    QMessageBox.information(self, "충전 완료", f"{self.CHARGE_AMOUNT:,}원이 충전되었습니다.")
-                else:
-                    QMessageBox.warning(self, "충전 실패", "카드 충전에 실패했습니다.")
-            else:
-                QMessageBox.warning(self, "오류", "카드를 인식할 수 없습니다.")
-
-        except Exception as e:
-            QMessageBox.warning(self, "오류", f"충전 처리 중 오류가 발생했습니다: {e}")
+    # ===================== RFID 관련 메서드 (현재 미사용 — 하드웨어 없음) =====================
+    # def show_rfid_page(self):
+    #     """RFID 페이지로 이동하면서 주문 금액 표시"""
+    #     total_amount = self.calculate_total_amount()
+    #     total_label = self.page11.findChild(QLabel, "totalLabel", Qt.FindChildrenRecursively)
+    #     if total_label:
+    #         total_label.setText(f"주문 금액: {total_amount:,}원")
+    #     payment_edit = self.page11.findChild(QLineEdit, "paymentEdit", Qt.FindChildrenRecursively)
+    #     if payment_edit:
+    #         payment_edit.setText(str(total_amount))
+    #     self.stack.setCurrentIndex(11)
+    #
+    # def process_rfid_payment(self):
+    #     """RFID 카드 결제 처리 함수"""
+    #     if not self.rfid_controller.ser:
+    #         QMessageBox.warning(self, "오류", "RFID 리더기가 연결되지 않았습니다.")
+    #         return
+    #     total_amount = self.calculate_total_amount()
+    #     if total_amount <= 0:
+    #         QMessageBox.warning(self, "오류", "주문 금액이 없습니다.")
+    #         return
+    #     QMessageBox.information(self, "카드 결제", "결제할 카드를 리더기에 올려주세요.")
+    #     try:
+    #         success, message = self.rfid_controller.deduct_amount(total_amount)
+    #         if success:
+    #             QMessageBox.information(self, "결제 완료", message)
+    #             self.complete_order()
+    #         else:
+    #             if "잔액 부족" in message:
+    #                 reply = QMessageBox.question(
+    #                     self, "잔액 부족", f"{message}\n충전하시겠습니까?",
+    #                     QMessageBox.Yes | QMessageBox.No)
+    #                 if reply == QMessageBox.Yes:
+    #                     self.reset_rfid_card()
+    #             else:
+    #                 QMessageBox.warning(self, "결제 실패", message)
+    #     except Exception as e:
+    #         QMessageBox.warning(self, "오류", f"결제 처리 중 오류가 발생했습니다: {e}")
+    #
+    # def reset_rfid_card(self):
+    #     """RFID 카드 충전 함수"""
+    #     if not self.rfid_controller.ser:
+    #         QMessageBox.warning(self, "오류", "RFID 리더기가 연결되지 않았습니다.")
+    #         return
+    #     QMessageBox.information(self, "카드 충전", "카드를 리더기에 올려주세요.")
+    #     try:
+    #         if self.rfid_controller.detect_card():
+    #             if self.rfid_controller.set_balance(self.CHARGE_AMOUNT):
+    #                 QMessageBox.information(self, "충전 완료", f"{self.CHARGE_AMOUNT:,}원이 충전되었습니다.")
+    #             else:
+    #                 QMessageBox.warning(self, "충전 실패", "카드 충전에 실패했습니다.")
+    #         else:
+    #             QMessageBox.warning(self, "오류", "카드를 인식할 수 없습니다.")
+    #     except Exception as e:
+    #         QMessageBox.warning(self, "오류", f"충전 처리 중 오류가 발생했습니다: {e}")
 
     # [Streamlit 연동 추가] 음성 주문 버튼 클릭 시 Streamlit 서버 실행 및 브라우저 접속
     def launch_streamlit_voice_order(self):
@@ -679,50 +656,12 @@ class SerbowayApp(QMainWindow):
         # 샌드위치 선택 페이지(page1)로 이동
         self.stack.setCurrentIndex(1) # 스택 위젯의 인덱스 1번 페이지로 이동
 
-    def show_webview(self):
-        """웹뷰 표시 함수 (현재 미사용)"""
-        self.stack.addWidget(self.webview) # 웹뷰를 스택에 추가
-        self.stack.setCurrentWidget(self.webview) # 웹뷰를 현재 위젯으로 설정
-
-    def handle_payment_result(self, result):
-        """결제 결과 처리 함수"""
-        if result.get("status") == "paid": # 결제 완료 상태인 경우
-            self.save_order() # 주문 저장
-            self.show_confirmation() # 확인 페이지 표시
-
-    def save_order(self):
-        """주문 데이터 저장 함수"""
-        try:
-            order_data = {
-                "orders": self.server.current_order, # 현재 주문 데이터
-                "timestamp": datetime.now().isoformat(), # ISO 형식 타임스탬프
-                "receipt": "".join(random.choices(string.digits, k=8)), # 8자리 영수증 번호
-            }
-
-            filename = f"order_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json" # 파일명 생성
-            with open(filename, "w", encoding="utf-8") as f:
-                json.dump(order_data, f, ensure_ascii=False, indent=2) # JSON 파일로 저장
-            print(f"주문 데이터 로컬 저장 완료: {filename}")
-        except Exception as e:
-            print(f"주문 저장 오류: {e}")
-
-    def show_confirmation(self):
-        """확인 페이지 표시 함수"""
-        QMessageBox.information(
-            self, "주문 완료", "음성 주문이 정상적으로 처리되었습니다!"
-        ) # 주문 완료 메시지 표시
-
     def closeEvent(self, event):
         """창 종료 시 리소스 정리 함수"""
         try:
             # [Streamlit 연동 추가] Streamlit 프로세스 종료
             if self.streamlit_proc: # Streamlit 프로세스가 실행 중이면
                 self.streamlit_proc.terminate() # 프로세스 종료
-            
-            # TCP 서버 종료
-            if hasattr(self, "server") and self.server.socket: # TCP 서버가 실행 중이면
-                self.server.running = False # 실행 상태를 False로 설정
-                self.server.socket.close() # 소켓 닫기
         except Exception as e:
             print(f"종료 처리 오류: {e}")
         
@@ -730,15 +669,9 @@ class SerbowayApp(QMainWindow):
 
     def run_tcp_server(self):
         """TCP 서버 실행 함수 (음성 주문 수신용)"""
-        # KIOSK_HOST = "192.168.0.55" # 키오스크 호스트 IP (주석 처리됨)
-        # KIOSK_HOST = "192.168.55.177" # 현재 사용 중인 키오스크 호스트 IP
-        KIOSK_HOST = "192.168.0.159"
-        # KIOSK_PORT = 650 # 포트 (주석 처리됨)
-        KIOSK_PORT = 5050 # 현재 사용 중인 포트
-
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s: # TCP 소켓 생성
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1) # 소켓 재사용 옵션 설정
-            s.bind((KIOSK_HOST, KIOSK_PORT)) # 호스트와 포트에 바인딩
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind((KIOSK_HOST, KIOSK_PORT))
             s.listen(1) # 연결 대기 (최대 1개 연결)
             
             while True: # 무한 루프로 연결 대기
@@ -748,12 +681,17 @@ class SerbowayApp(QMainWindow):
                     if data: # 데이터가 있으면
                         try:
                             order_json = json.loads(data.decode()) # JSON 데이터 파싱
-                            self.voice_order_data = order_json # 음성 주문 데이터 저장
+                            validated = OrderDataSchema(**order_json) # Pydantic 스키마 검증
+                            self.voice_order_data = validated.model_dump() # 검증된 데이터 저장
                             conn.sendall(b"received") # 수신 확인 응답
                             
                             # 주문 UI 반영을 위한 이벤트 발송
                             QApplication.postEvent(self, VoiceOrderEvent()) # 사용자 정의 이벤트 발송
-                        except Exception: # JSON 파싱 오류 등
+                        except (json.JSONDecodeError, ValidationError) as e:
+                            print(f"TCP 수신 데이터 검증 실패: {e}")
+                            conn.sendall(b"fail") # 실패 응답
+                        except Exception as e:
+                            print(f"TCP 서버 오류: {e}")
                             conn.sendall(b"fail") # 실패 응답
 
     def process_voice_order(self):
@@ -764,7 +702,6 @@ class SerbowayApp(QMainWindow):
 
         if self.voice_order_data: # 음성 주문 데이터가 있으면
             order = self.voice_order_data # 주문 데이터 참조
-            print(2) # 디버깅용 출력
             
             self.order_data = {"menu": []} # 주문 데이터 초기화
             

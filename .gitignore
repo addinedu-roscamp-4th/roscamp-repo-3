@@ -173,6 +173,10 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
+# 프로젝트 내부 문서 (코드 리뷰/계획서)
+spec.md
+plan.md
+
 # 가상환경 
 /serboway_venv
 
